@@ -1,0 +1,16 @@
+steps:
+- task: UseDotNet@2
+  inputs:
+    packageType: 'sdk'
+    version: '3.1.x'
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+- task: CmdLine@2
+  inputs:
+    script: |
+      dotnet tool restore
+      dotnet ef migrations script --context SmartAptDataContext -i -o $(build.artifactstagingdirectory)/SmartAptDataContext.sql
+    workingDirectory: 'SmartAptData.Data'
+- task: PublishBuildArtifacts@1
+  inputs:
+    ArtifactName: MigrationsSQLScript
+  

@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>SampleApi.RestAPI</name>
+    </assembly>
+    <members>
+        <member name="M:SampleApi.RestAPI.Controllers.ApartmentsController.Post(SampleApi.RestAPI.Models.CreateApartmentDto)">
+            <summary>
+            Creates a apartment at specified location.
+            </summary>
+            <param name="createApartmentDto">The model of the new Apartment</param>
+            <response code="500">Server side error has happened.</response>
+            <response code="406">The requested media type is not supported.</response>
+            <response code="400">The data provided in the request can not be parsed. Check the syntax of the json payload.</response>
+            <response code="403">You have no permission for creating new apartments.</response>
+            <response code="404">The location with the specified Id does not exist.</response>
+            <response code="422">The apartment in this location already been added. </response>
+            <returns></returns>
+        </member>
+        <member name="T:SampleApi.RestAPI.Models.ApiError">
+            <summary>
+            | Code | Description                                                                                                     |
+            | ---- | ------------------                                                                                              |
+            | 100  | The request body can not be parsed. Ensure that request payload syntax is proper.                               |
+            | 101  | Input validation error happened. Some of the fields have invalid data. See the error message for more details.  |
+            | 200  | Client does not have permission to create Location.                                                             |
+            | 201  | Duplicate locations are not allowed                                                                             |
+            | 999  | Other error.                                                                                                    |
+            </summary>
+        </member>
+        <member name="P:SampleApi.RestAPI.Models.ApiError.Code">
+            <summary>
+            Machine readable error code
+            </summary>
+            <example>123</example>
+        </member>
+        <member name="P:SampleApi.RestAPI.Models.ApiError.Message">
+            <summary>
+            Human readable error message
+            </summary>
+            <example>Description of the error</example>
+        </member>
+        <member name="P:SampleApi.RestAPI.Models.ApiErrorResponse.Errors">
+            <summary>
+            The list of customer errors.
+            </summary>
+        </member>
+    </members>
+</doc>

@@ -1,0 +1,224 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "resourceNamePostfix": {
+      "type": "string",
+      "defaultValue": "itest"
+    },
+    "resourceNameRoot": {
+      "type": "string",
+      "defaultValue": "rsadata"
+    },
+    "sqlLogin": {
+      "type": "string",
+      "defaultValue": "smartapt-admin"
+    },
+    "sqlPassword": {
+      "type": "string"
+    }
+  },
+  "variables": {
+    "commonResourceName": "[concat(parameters('resourceNameRoot'), '-', toLower(parameters('resourceNamePostfix')))]",
+    "appInsightsResourceName": "[variables('commonResourceName')]",
+    "apiAppResourceName": "[variables('commonResourceName')]",    
+    "keyVaultResourceName": "[variables('commonResourceName')]",    
+    "apiAppHostingPlanName": "[variables('commonResourceName')]",
+    "postfix": "[concat('-', toLower(parameters('resourceNamePostfix')))]",
+    "sqlServerName": "[concat(parameters('resourceNameRoot'), variables('postfix'))]",
+    "sqlDbName": "[concat(parameters('resourceNameRoot'), variables('postfix'))]",
+    "environmentSettings": {
+      "prod": {
+        "skuTier": "Standard",
+        "skuName": "S1",
+        "skuFamily": "S",
+        "skuDbCapacity": "20"
+      },
+      "test": {
+        "skuTier": "Basic",
+        "skuName": "B1",
+        "skuFamily": "B",
+        "skuDbCapacity": "5"
+      }
+    },
+    "envSkuTier": "[if(equals(variables('postfix'),'-prod'),  variables('environmentSettings')['prod'].skuTier  , variables('environmentSettings')['test'].skuTier)]",
+    "envSkuFamily": "[if(equals(variables('postfix'),'-prod'),  variables('environmentSettings')['prod'].skuFamily  , variables('environmentSettings')['test'].skuFamily)]",
+    "envSkuName": "[if(equals(variables('postfix'),'-prod'),  variables('environmentSettings')['prod'].skuName  , variables('environmentSettings')['test'].skuName)]",
+    "envSkuDbCapacity": "[if(equals(variables('postfix'),'-prod'),  variables('environmentSettings')['prod'].skuDbCapacity  , variables('environmentSettings')['test'].skuDbCapacity)]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Sql/servers",
+      "apiVersion": "2015-05-01-preview",
+      "name": "[variables('sqlServerName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "administratorLogin": "[parameters('sqlLogin')]",
+        "administratorLoginPassword": "[parameters('sqlPassword')]"
+      },
+      "resources": [
+        {
+          "type": "databases",
+          "apiVersion": "2017-10-01-preview",
+          "name": "[variables('sqlDbName')]",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]"
+          ],
+          "sku": {
+            "name": "[variables('envSkuTier')]",
+            "tier": "[variables('envSkuTier')]",
+            "capacity": "[variables('envSkuDbCapacity')]"
+          },
+          "properties": {
+            "collation": "SQL_Latin1_General_CP1_CI_AS",
+            "maxSizeBytes": 2147483648,
+            "zoneRedundant": false,
+            "readScale": "Disabled",
+            "readReplicaCount": 0
+          }
+        },
+        {
+          "type": "firewallrules",
+          "apiVersion": "2014-04-01-preview",
+          "name": "AllowAllWindowsAzureIps",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]"
+          ],
+          "properties": {
+            "endIpAddress": "0.0.0.0",
+            "startIpAddress": "0.0.0.0"
+          },
+          "condition": true
+        },
+        {
+          "type": "securityAlertPolicies",
+          "apiVersion": "2017-03-01-preview",
+          "name": "Default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]",
+            "[resourceId('Microsoft.Sql/servers/databases', variables('sqlServerName'), variables('sqlDbName'))]"
+          ],
+          "properties": {
+            "state": "Enabled",
+            "disabledAlerts": [
+            ],
+            "emailAddresses": [
+            ],
+            "emailAccountAdmins": true
+          },
+          "condition": false
+        }
+      ]
+    },    
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2018-02-01",
+      "name": "[variables('apiAppHostingPlanName')]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "[variables('envSkuName')]",
+        "tier": "[variables('envSkuTier')]",
+        "size": "[variables('envSkuName')]",
+        "family": "[variables('envSkuFamily')]",
+        "capacity": 1
+      },
+      "kind": "linux",
+      "properties": {
+        "targetWorkerCount": 0,
+        "targetWorkerSizeId": 0
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "kind": "api",
+      "name": "[variables('apiAppResourceName')]",
+      "apiVersion": "2018-11-01",
+      "location": "[resourceGroup().location]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {        
+        "httpsOnly": true,
+        "enabled": true,
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('apiAppHostingPlanName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('apiAppHostingPlanName'))]"
+      ]
+    },    
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2015-05-01",
+      "name": "[variables('appInsightsResourceName')]",
+      "location": "[resourceGroup().location]",
+      "kind": "other",
+      "properties": {
+        "Application_Type": "other"
+      }
+    }, 
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2016-10-01",
+      "name": "[variables('keyVaultResourceName')]",
+      "location": "[resourceGroup().location]",      
+      "properties": {
+        "sku": {
+          "family": "A",
+          "name": "Standard"
+        },
+        "tenantId": "[subscription().tenantId]",
+        "enabledForDeployment": false,
+        "enabledForDiskEncryption": false,
+        "enabledForTemplateDeployment": true        
+      },
+      "resources": [
+        {
+          "type": "secrets",
+          "apiVersion": "2016-10-01",
+          "name": "SmartAptDataConnectionString",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultResourceName'))]"
+          ],
+          "properties": {
+            "value": "[concat('Server=tcp:', reference(resourceId('Microsoft.Sql/servers', variables('sqlServerName'))).fullyQualifiedDomainName, ',1433; Initial Catalog=', variables('sqlDbName'), ';Persist Security Info=False; User ID=', reference(resourceId('Microsoft.Sql/servers', variables('sqlServerName'))).administratorLogin, '; Password=''', parameters('sqlPassword'),'''; MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;')]",
+            "attributes": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "type": "secrets",
+          "apiVersion": "2016-10-01",
+          "name": "AppInsightsInstrumentationKey",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultResourceName'))]"
+          ],
+          "properties": {
+            "value": "[reference(resourceId('microsoft.insights/components/', variables('appInsightsResourceName')), '2015-05-01').InstrumentationKey]",
+            "attributes": {
+              "enabled": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "ApiAppServiceName": {
+      "type": "string",
+      "value": "[variables('apiAppResourceName')]"
+    },
+    "AppInsightsInstrumentationKeyKeyVaultLink": {
+      "type": "string",
+      "value": "[concat('@Microsoft.KeyVault(SecretUri=', reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultResourceName'), 'AppInsightsInstrumentationKey')).secretUri, ')')]"
+    },
+    "SmartAptDataConnectionStringKeyVaultLink": {
+      "type": "string",
+      "value": "[concat('@Microsoft.KeyVault(SecretUri=', reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultResourceName'), 'SmartAptDataConnectionString')).secretUri, ')')]"
+    }
+  }
+}

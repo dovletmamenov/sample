@@ -1,0 +1,130 @@
+trigger:
+  branches:
+    include:
+    - master 
+
+variables:
+- name: azureSubscriptionName
+  value: 'SmartAptDataServiceConnection'
+- name: resourceGroupName
+  value: 'smartapartmentdata'
+- name: location
+  value: 'North Europe'
+
+stages:
+
+  - stage: Build_REST_API
+    jobs:
+    - job:
+      steps:
+      - task: CmdLine@2
+        displayName: 'check code style'
+        inputs:
+           script: |
+             dotnet tool restore
+             dotnet format --dry-run --check
+      - task: DotNetCoreCLI@2
+        displayName: 'Unit tests'
+        inputs:
+          command: test
+          arguments: '--filter TestCategory=UnitTests'
+      - task: DotNetCoreCLI@2
+        displayName: 'Rest API build'
+        inputs:
+          command: publish
+          publishWebProjects: false
+          projects: SmartAptData.RestAPI/SmartAptData.RestAPI.csproj
+          arguments: '--output $(Build.ArtifactStagingDirectory)/RestApi'
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish Rest API artifact'
+        inputs:
+          ArtifactName: dropRestApi
+          PathtoPublish: '$(Build.ArtifactStagingDirectory)/RestApi'
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish ARM templates as artifacts'
+        inputs:
+          PathtoPublish: 'CI/Resources/create-resources.json'
+          ArtifactName: dropARMTemplate
+      - template: templates/create-migrations-script-artifact.yml
+
+  - stage: Deploy_to_ITEST
+    dependsOn: Build_REST_API
+    condition: succeeded()
+    jobs:
+    - deployment: Deploy
+      pool:
+        vmImage: 'windows-latest'
+      environment: 'ITEST'
+      strategy:
+        runOnce:
+          deploy:
+            steps:            
+            - task: AzureResourceGroupDeployment@2
+              displayName: 'deploy resources from ARM templates'
+              inputs:
+                azureSubscription: '$(azureSubscriptionName)'
+                resourceGroupName: '$(resourceGroupName)'
+                location: '$(location)'
+                csmFile: '$(Pipeline.Workspace)/dropARMTemplate/create-resources.json'
+                overrideParameters: '-resourceNamePostfix "itest" -sqlPassword "$(SqlPassword)"'
+            - task: ARM Outputs@6
+              displayName: 'Output variables from ARM templates into the Pipeline'
+              inputs:
+                ConnectedServiceNameSelector: 'ConnectedServiceNameARM'
+                ConnectedServiceNameARM: '$(azureSubscriptionName)'
+                resourceGroupName: '$(resourceGroupName)'
+                prefix: 'arm'
+                whenLastDeploymentIsFailed: 'fail'
+            - task: AzureRmWebAppDeployment@4
+              displayName: 'deploy Web API app'
+              inputs:
+                ConnectionType: 'AzureRM'
+                azureSubscription: '$(azureSubscriptionName)'
+                appType: 'webAppLinux'
+                WebAppName: '$(armApiAppServiceName)'
+                packageForLinux: '$(Pipeline.Workspace)/dropRestApi/SmartAptData.RestAPI.zip'
+                AppSettings: '-SmartAptDataConnectionString $(armSmartAptDataConnectionStringKeyVaultLink) -ApplicationInsights:InstrumentationKey $(armAppInsightsInstrumentationKeyKeyVaultLink)'
+            - task: webappconfiguration@1
+              displayName: 'set configurations in Web API app'
+              inputs:
+                ConnectedServiceName: '$(azureSubscriptionName)'
+                WebAppName: '$(armApiAppServiceName)'
+                ResourceGroupName: '$(resourceGroupName)'
+                ValidateFlag: false
+                Cleanup: true            
+            - task: andrewlackenby.sql-toolkit-azure.runsinglesqlscriptazure.RunSqlScriptAzure@1
+              displayName: 'Run sql scripts to apply migrations'
+              inputs:
+                ConnectedServiceNameSelector: ConnectedServiceNameARM
+                ConnectedServiceNameARM: '$(azureSubscriptionName)'
+                sqlScript: '$(Pipeline.Workspace)/MigrationsSQLScript/SmartAptDataContext.sql'
+                serverName: 'smartapt-itest'
+                databaseName: 'smartapt-itest'
+                userName: smartapt-admin
+                userPassword: '''$(SqlPassword)'''
+
+  - stage: Run_Integration_Tests_on_ITEST
+    dependsOn: Deploy_to_ITEST
+    condition: succeeded()
+    jobs:
+    - job: Windows
+      pool: 
+        vmImage: 'windows-latest'
+      steps:
+      - task: qetza.replacetokens.replacetokens-task.replacetokens@3
+        displayName: 'Replace settings for integration tests with pipeline vars'
+        inputs:
+          targetFiles: '**/CI.runsettings'
+          encoding: 'auto'
+          writeBOM: true
+          actionOnMissing: 'warn'
+          keepToken: false
+          tokenPrefix: '#{'
+          tokenSuffix: '}#'
+          useLegacyPattern: false
+          enableTelemetry: true
+      - task: DotNetCoreCLI@2
+        displayName: 'Run integration tests'
+        inputs:
+          command: 'test'
+          arguments: '--filter "FullyQualifiedName~IntegrationTests" --settings "SmartAptData.IntegrationTests/CI.runsettings"'
